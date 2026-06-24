@@ -20,6 +20,8 @@ SALT = b"fixed-salt"
 
 PORT = int(os.environ.get("PORT", 5000))
 
+connected_clients = set()
+
 
 # ============================
 #  KEY DERIVATION
@@ -59,14 +61,37 @@ def encrypt_to_base64(text: str) -> str:
 
 
 # ============================
+#  BROADCAST
+# ============================
+
+async def broadcast(text: str):
+    encrypted = encrypt_to_base64(text)
+    dead = []
+
+    for ws in connected_clients:
+        try:
+            await ws.send(encrypted)
+        except:
+            dead.append(ws)
+
+    for ws in dead:
+        connected_clients.discard(ws)
+
+
+# ============================
 #  WEBSOCKET HANDLER
 # ============================
 
 async def ws_handler(websocket: WebSocketServerProtocol):
     print("[SERVER] Client connected")
+    connected_clients.add(websocket)
 
     try:
         async for message in websocket:
+            if message == "ping":
+                await websocket.send("pong")
+                continue
+
             try:
                 plaintext = decrypt_base64_message(message)
                 print(f"[SERVER] Decrypted: {plaintext}")
@@ -74,24 +99,21 @@ async def ws_handler(websocket: WebSocketServerProtocol):
                 print(f"[SERVER] Decryption failed: {e}")
                 continue
 
-            response = f"Server got: {plaintext}"
-            encrypted = encrypt_to_base64(response)
-            await websocket.send(encrypted)
+            await broadcast(plaintext)
 
     finally:
+        connected_clients.discard(websocket)
         print("[SERVER] Client disconnected")
 
 
 # ============================
-#  HTTP FALLBACK HANDLER
+#  HTTP FALLBACK (Render)
 # ============================
 
-async def http_handler(path, request_headers):
-    # Allow WebSocket upgrades
-    if request_headers.get("Upgrade", "").lower() == "websocket":
+async def http_handler(path, headers):
+    if headers.get("Upgrade", "").lower() == "websocket":
         return None
 
-    # Respond to Render health checks
     return (
         200,
         [("Content-Type", "text/plain")],
@@ -110,6 +132,10 @@ async def main():
         ws_handler,
         "0.0.0.0",
         PORT,
-        process_request=http_handler,   # <--- THIS handles HTTP GET/HEAD
+        process_request=http_handler,
     ):
-        await asyncio.Future()  # run forever
+        await asyncio.Future()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
