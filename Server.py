@@ -87,7 +87,11 @@ async def ws_handler(websocket: WebSocketServerProtocol):
 # ============================
 
 async def http_handler(path, request_headers):
-    # Render health check hits GET /
+    # Allow WebSocket upgrades
+    if request_headers.get("Upgrade", "").lower() == "websocket":
+        return None
+
+    # Respond to Render health checks
     return (
         200,
         [("Content-Type", "text/plain")],
