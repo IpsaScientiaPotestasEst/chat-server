@@ -113,7 +113,3 @@ async def main():
         process_request=http_handler,   # <--- THIS handles HTTP GET/HEAD
     ):
         await asyncio.Future()  # run forever
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
