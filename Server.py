@@ -9,6 +9,19 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
 
+def start_http_server():
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+    with socketserver.TCPServer(("", PORT), Handler) as httpd:
+        httpd.serve_forever()
+
 PASSWORD = b"SuperSecretPassword123"  # same as client
 SALT = b"fixed-salt"                 # same as client
 
@@ -41,7 +54,7 @@ def decrypt_base64_message(b64: str) -> str:
 def encrypt_to_base64(text: str) -> str:
     """Encrypt text with AES-GCM, prepend IV, return base64 string."""
     aesgcm = AESGCM(KEY)
-    iv = AESGCM.generate_key(bit_length=96)  # 12 bytes IV
+    iv = os.urandom(12) 
     ciphertext = aesgcm.encrypt(iv, text.encode("utf-8"), None)
     combined = iv + ciphertext
     return base64.b64encode(combined).decode("utf-8")
@@ -67,13 +80,14 @@ async def handler(websocket):
     finally:
         print("[SERVER] Client disconnected")
 
-
 async def main():
-    PORT = int(os.environ.get("PORT", 5000))
-    async with websockets.serve(handler, "0.0.0.0", PORT):
-        print(f"[SERVER] Listening on port {PORT}")
-        await asyncio.Future()  # run forever
+    # Start HTTP server in background thread
+    threading.Thread(target=start_http_server, daemon=True).start()
 
+    # Start WebSocket server
+    async with websockets.serve(handler, "0.0.0.0", PORT + 1):
+        print(f"[SERVER] WebSocket on {PORT+1}")
+        await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
