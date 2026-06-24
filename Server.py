@@ -1,26 +1,77 @@
 import asyncio
-import websockets
+import base64
 import json
-import os
 
-clients = set()
+import websockets
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
 
-async def handler(ws):
-    clients.add(ws)
+PASSWORD = b"SuperSecretPassword123"  # same as client
+SALT = b"fixed-salt"                 # same as client
+
+
+def derive_key(password: bytes, salt: bytes) -> bytes:
+    """Derive a 256-bit AES key from a password using PBKDF2."""
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100_000,
+        backend=default_backend(),
+    )
+    return kdf.derive(password)
+
+
+KEY = derive_key(PASSWORD, SALT)
+
+
+def decrypt_base64_message(b64: str) -> str:
+    """Decode base64, split IV + ciphertext, decrypt with AES-GCM."""
+    data = base64.b64decode(b64)
+    iv = data[:12]
+    ciphertext = data[12:]
+    aesgcm = AESGCM(KEY)
+    plaintext = aesgcm.decrypt(iv, ciphertext, None)
+    return plaintext.decode("utf-8")
+
+
+def encrypt_to_base64(text: str) -> str:
+    """Encrypt text with AES-GCM, prepend IV, return base64 string."""
+    aesgcm = AESGCM(KEY)
+    iv = AESGCM.generate_key(bit_length=96)  # 12 bytes IV
+    ciphertext = aesgcm.encrypt(iv, text.encode("utf-8"), None)
+    combined = iv + ciphertext
+    return base64.b64encode(combined).decode("utf-8")
+
+
+async def handler(websocket):
+    print("[SERVER] Client connected")
     try:
-        async for message in ws:
-            data = json.loads(message)
-            for client in clients:
-                await client.send(json.dumps(data))
-    except:
-        pass
+        async for message in websocket:
+            # message is base64-encoded encrypted data
+            try:
+                plaintext = decrypt_base64_message(message)
+                print(f"[SERVER] Decrypted from client: {plaintext}")
+            except Exception as e:
+                print(f"[SERVER] Decryption failed: {e}")
+                continue
+
+            # Simple echo-style response
+            response_text = f"Server got: {plaintext}"
+            encrypted_response = encrypt_to_base64(response_text)
+
+            await websocket.send(encrypted_response)
     finally:
-        clients.remove(ws)
+        print("[SERVER] Client disconnected")
+
 
 async def main():
-    PORT = int(os.environ.get("PORT", 5000))
-    async with websockets.serve(handler, "0.0.0.0", PORT):
-        print(f"Server running on port {PORT}")
-        await asyncio.Future()
+    async with websockets.serve(handler, "0.0.0.0", 5000):
+        print("[SERVER] Listening on ws://0.0.0.0:5000")
+        await asyncio.Future()  # run forever
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
