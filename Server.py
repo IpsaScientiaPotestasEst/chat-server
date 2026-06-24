@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import os
+import json
+import uuid
 
 import websockets
 from websockets import WebSocketServerProtocol
@@ -11,21 +13,12 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
 
 
-# ============================
-#  CONFIG
-# ============================
-
 PASSWORD = b"SuperSecretPassword123"
 SALT = b"fixed-salt"
-
 PORT = int(os.environ.get("PORT", 5000))
 
-connected_clients = set()
+connected_clients = {}  # websocket -> client_id
 
-
-# ============================
-#  KEY DERIVATION
-# ============================
 
 def derive_key(password: bytes, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(
@@ -39,10 +32,6 @@ def derive_key(password: bytes, salt: bytes) -> bytes:
 
 KEY = derive_key(PASSWORD, SALT)
 
-
-# ============================
-#  ENCRYPTION HELPERS
-# ============================
 
 def decrypt_base64_message(b64: str) -> str:
     data = base64.b64decode(b64)
@@ -60,12 +49,8 @@ def encrypt_to_base64(text: str) -> str:
     return base64.b64encode(iv + ciphertext).decode("utf-8")
 
 
-# ============================
-#  BROADCAST
-# ============================
-
-async def broadcast(text: str):
-    encrypted = encrypt_to_base64(text)
+async def broadcast(json_message: dict):
+    encrypted = encrypt_to_base64(json.dumps(json_message))
     dead = []
 
     for ws in connected_clients:
@@ -75,16 +60,13 @@ async def broadcast(text: str):
             dead.append(ws)
 
     for ws in dead:
-        connected_clients.discard(ws)
+        del connected_clients[ws]
 
-
-# ============================
-#  WEBSOCKET HANDLER
-# ============================
 
 async def ws_handler(websocket: WebSocketServerProtocol):
-    print("[SERVER] Client connected")
-    connected_clients.add(websocket)
+    client_id = str(uuid.uuid4())
+    connected_clients[websocket] = client_id
+    print(f"[SERVER] Client connected: {client_id}")
 
     try:
         async for message in websocket:
@@ -94,21 +76,16 @@ async def ws_handler(websocket: WebSocketServerProtocol):
 
             try:
                 plaintext = decrypt_base64_message(message)
-                print(f"[SERVER] Decrypted: {plaintext}")
-            except Exception as e:
-                print(f"[SERVER] Decryption failed: {e}")
+                data = json.loads(plaintext)
+            except:
                 continue
 
-            await broadcast(plaintext)
+            await broadcast(data)
 
     finally:
-        connected_clients.discard(websocket)
-        print("[SERVER] Client disconnected")
+        print(f"[SERVER] Client disconnected: {client_id}")
+        del connected_clients[websocket]
 
-
-# ============================
-#  HTTP FALLBACK (Render)
-# ============================
 
 async def http_handler(path, headers):
     if headers.get("Upgrade", "").lower() == "websocket":
@@ -120,10 +97,6 @@ async def http_handler(path, headers):
         b"OK",
     )
 
-
-# ============================
-#  MAIN ENTRY
-# ============================
 
 async def main():
     print(f"[SERVER] Starting on port {PORT}")
