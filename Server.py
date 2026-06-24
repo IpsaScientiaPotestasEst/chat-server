@@ -1,13 +1,9 @@
-
 import asyncio
 import base64
 import os
-import threading
-import http.server
-import socketserver
 
 import websockets
-from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
+from websockets import WebSocketServerProtocol
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -22,7 +18,7 @@ from cryptography.hazmat.backends import default_backend
 PASSWORD = b"SuperSecretPassword123"
 SALT = b"fixed-salt"
 
-PORT = int(os.environ.get("PORT", 5000))   # Render exposes THIS port only
+PORT = int(os.environ.get("PORT", 5000))
 
 
 # ============================
@@ -63,32 +59,10 @@ def encrypt_to_base64(text: str) -> str:
 
 
 # ============================
-#  HTTP SERVER (Health Check)
-# ============================
-
-def start_http_server():
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def do_HEAD(self):
-            self.send_response(200)
-            self.end_headers()
-
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
-
-        def log_message(self, *args):
-            return  # silence logs
-
-    with socketserver.TCPServer(("", PORT), Handler) as httpd:
-        httpd.serve_forever()
-
-
-# ============================
 #  WEBSOCKET HANDLER
 # ============================
 
-async def ws_handler(websocket):
+async def ws_handler(websocket: WebSocketServerProtocol):
     print("[SERVER] Client connected")
 
     try:
@@ -104,11 +78,21 @@ async def ws_handler(websocket):
             encrypted = encrypt_to_base64(response)
             await websocket.send(encrypted)
 
-    except (ConnectionClosedOK, ConnectionClosedError):
-        pass
-
     finally:
         print("[SERVER] Client disconnected")
+
+
+# ============================
+#  HTTP FALLBACK HANDLER
+# ============================
+
+async def http_handler(path, request_headers):
+    # Render health check hits GET /
+    return (
+        200,
+        [("Content-Type", "text/plain")],
+        b"OK",
+    )
 
 
 # ============================
@@ -116,12 +100,14 @@ async def ws_handler(websocket):
 # ============================
 
 async def main():
-    # Start HTTP server on same port
-    threading.Thread(target=start_http_server, daemon=True).start()
+    print(f"[SERVER] Starting on port {PORT}")
 
-    # Start WebSocket server on same port
-    async with websockets.serve(ws_handler, "0.0.0.0", PORT):
-        print(f"[SERVER] Running on port {PORT}")
+    async with websockets.serve(
+        ws_handler,
+        "0.0.0.0",
+        PORT,
+        process_request=http_handler,   # <--- THIS handles HTTP GET/HEAD
+    ):
         await asyncio.Future()  # run forever
 
 
