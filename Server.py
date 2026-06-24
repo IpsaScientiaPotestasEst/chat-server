@@ -9,6 +9,10 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
 
+import http.server
+import socketserver
+import threading
+
 def start_http_server():
     class Handler(http.server.SimpleHTTPRequestHandler):
         def do_HEAD(self):
