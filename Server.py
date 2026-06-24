@@ -13,6 +13,8 @@ import http.server
 import socketserver
 import threading
 
+PORT = int(os.environ.get("PORT", 5000))
+
 def start_http_server():
     class Handler(http.server.SimpleHTTPRequestHandler):
         def do_HEAD(self):
