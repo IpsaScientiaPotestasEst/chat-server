@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 
 import websockets
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -68,8 +69,9 @@ async def handler(websocket):
 
 
 async def main():
-    async with websockets.serve(handler, "0.0.0.0", 5000):
-        print("[SERVER] Listening on ws://0.0.0.0:5000")
+    PORT = int(os.environ.get("PORT", 5000))
+    async with websockets.serve(handler, "0.0.0.0", PORT):
+        print(f"[SERVER] Listening on port {PORT}")
         await asyncio.Future()  # run forever
 
 
